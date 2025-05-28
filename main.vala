@@ -1,4 +1,3 @@
-// main.vala
 public class TextEditor : Adw.Application {
     private Gtk.Window window;
     private Gtk.TextView text_view;
@@ -10,7 +9,7 @@ public class TextEditor : Adw.Application {
 
     public TextEditor() {
         Object(
-            application_id: "com.github.SquarDE.EctoEdit",
+            application_id: "com.github.SqaurDE.EctoEdit",
             flags: ApplicationFlags.HANDLES_OPEN
         );
     }
@@ -48,18 +47,57 @@ public class TextEditor : Adw.Application {
         header_bar.pack_end(save_as_button);
         header_bar.pack_end(save_button);
 
-        // Create text view
+        // Create text view with monospace font
         text_view = new Gtk.TextView() {
             hexpand = true,
             vexpand = true,
-            wrap_mode = Gtk.WrapMode.WORD
+            wrap_mode = Gtk.WrapMode.WORD,
+            monospace = true
         };
 
-        // Buffer signal for modified changes
-        text_view.buffer.changed.connect(() => {
-            var modified = text_view.buffer.get_modified();
-            save_button.sensitive = modified && (current_file != null);
+        // Set tab width to 4 spaces equivalent
+        var tab_array = new Pango.TabArray(1, true);
+        tab_array.set_tab(0, Pango.TabAlign.LEFT, 4 * Pango.SCALE);
+        text_view.tabs = tab_array;
+
+        // Auto-indentation setup
+        text_view.buffer.notify["cursor-position"].connect(() => {
+            var buffer = text_view.buffer;
+            Gtk.TextIter iter;
+            buffer.get_iter_at_mark(out iter, buffer.get_insert());
+            
+            var line_start = iter.copy();
+            line_start.set_line_offset(0);
+            
+            string line_text = line_start.get_text(iter);
+            string whitespace = "";
+            
+            for (int i = 0; i < line_text.length; i++) {
+                if (line_text[i] == ' ' || line_text[i] == '\t') {
+                    whitespace += line_text[i].to_string();
+                } else {
+                    break;
+                }
+            }
+            
+            text_view.set_data<string>("indent-pattern", whitespace);
         });
+
+        // Handle key press events
+        var controller = new Gtk.EventControllerKey();
+        controller.key_pressed.connect((keyval, keycode, state) => {
+            if (keyval == Gdk.Key.Return || keyval == Gdk.Key.KP_Enter) {
+                var buffer = text_view.buffer;
+                string? indent = text_view.get_data<string>("indent-pattern");
+                
+                if (indent != null) {
+                    buffer.insert_at_cursor("\n" + indent, -1);
+                    return true;
+                }
+            }
+            return false;
+        });
+        text_view.add_controller(controller);
 
         // Create scrolled window for text view
         var scrolled_window = new Gtk.ScrolledWindow() {
@@ -70,6 +108,7 @@ public class TextEditor : Adw.Application {
         window.child = scrolled_window;
         window.present();
     }
+
 
     protected override void open(File[] files, string hint) {
         if (files.length > 0) {
