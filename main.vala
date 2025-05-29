@@ -17,8 +17,8 @@ public class TextEditor : Adw.Application {
     protected override void activate() {
         // Create the main window
         window = new Gtk.ApplicationWindow(this) {
-            default_width = 800,
-            default_height = 600,
+            default_width = 1000,
+            default_height = 800,
             title = "EctoEdit"
         };
 
@@ -54,7 +54,12 @@ public class TextEditor : Adw.Application {
             wrap_mode = Gtk.WrapMode.WORD,
             monospace = true
         };
-
+        
+        // Set larger font size using CSS on the text buffer
+        var css_provider = new Gtk.CssProvider();
+        css_provider.load_from_data("textview text { font-size: 14pt; }".data);
+        text_view.get_style_context().add_provider(css_provider, Gtk.STYLE_PROVIDER_PRIORITY_USER);
+        
         // Set tab width to 4 spaces equivalent
         var tab_array = new Pango.TabArray(1, true);
         tab_array.set_tab(0, Pango.TabAlign.LEFT, 4 * Pango.SCALE);
@@ -106,9 +111,17 @@ public class TextEditor : Adw.Application {
 
         // Set the window child
         window.child = scrolled_window;
+        
+        // Connect to close request to handle unsaved changes
+        window.close_request.connect(on_close_request);
+        
+        // Connect to buffer changed signal to enable save button
+        text_view.buffer.changed.connect(() => {
+            save_button.sensitive = true;
+        });
+        
         window.present();
     }
-
 
     protected override void open(File[] files, string hint) {
         if (files.length > 0) {
@@ -173,6 +186,54 @@ public class TextEditor : Adw.Application {
         } catch (Error e) {
             show_error("Could not save file", e.message);
         }
+    }
+
+    private bool on_close_request() {
+        if (text_view.buffer.get_modified()) {
+            var dialog = new Gtk.AlertDialog("Unsaved Changes");
+            dialog.detail = "Do you want to save your changes before closing?";
+            dialog.buttons = {"Save", "Don't Save", "Cancel"};
+            dialog.default_button = 0;
+            dialog.cancel_button = 2;
+            
+            dialog.choose.begin(window, null, (obj, res) => {
+                try {
+                    int response = dialog.choose.end(res);
+                    switch (response) {
+                        case 0: // Save
+                            if (current_file != null) {
+                                save_to_file(File.new_for_path(current_file));
+                                window.destroy();
+                            } else {
+                                // Need to save as
+                                var save_dialog = new Gtk.FileDialog();
+                                save_dialog.save.begin(window, null, (obj2, res2) => {
+                                    try {
+                                        var file = save_dialog.save.end(res2);
+                                        current_file = file.get_path();
+                                        save_to_file(file);
+                                        window.destroy();
+                                    } catch (Error e) {
+                                        show_error("Could not save file", e.message);
+                                    }
+                                });
+                            }
+                            break;
+                        case 1: // Don't Save
+                            window.destroy();
+                            break;
+                        case 2: // Cancel
+                            // Do nothing, keep window open
+                            break;
+                    }
+                } catch (Error e) {
+                    // Handle dialog error, keep window open
+                }
+            });
+            
+            return true; // Prevent immediate close
+        }
+        return false; // Allow close if no changes
     }
 
     private void show_error(string primary, string secondary) {
