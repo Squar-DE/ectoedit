@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=EctoEdit
+Comment=A sleek text editor with syntax highlighting
+Exec=ectoedit
+Icon=ectoedit
+Terminal=false
+Type=Application
+Categories=Utility;TextEditor;
+Keywords=text;editor;code;

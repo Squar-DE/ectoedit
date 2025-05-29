@@ -11,14 +11,10 @@ source=("$pkgname-$pkgver.tar.xz::https://github.com/Squar-DE/ectoedit/releases/
 sha256sums=('SKIP')
 
 package() {
-  cd "$srcdir/$pkgname-$pkgver"
-
+  cd "$srcdir/$pkgname-v$pkgver"
   # Binary
   install -Dm755 ectoedit "$pkgdir/usr/bin/ectoedit"
-
   # Desktop Entry
   install -Dm644 ectoedit.desktop "$pkgdir/usr/share/applications/ectoedit.desktop"
-
-  # Icons
-  install -Dm644 icons/hicolor/scalable/apps/ectoedit.svg "$pkgdir/usr/share/icons/hicolor/scalable/apps/EctoEdit.svg"
+  install -Dm644 icons/EctoEdit.svg "$pkgdir/usr/share/icons/hicolor/scalable/apps/ectoedit.svg"
 }
