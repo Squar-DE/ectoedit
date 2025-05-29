@@ -1,6 +1,7 @@
 public class TextEditor : Adw.Application {
     private Gtk.Window window;
-    private Gtk.TextView text_view;
+    private GtkSource.View text_view;
+    private GtkSource.Buffer buffer;
     private Gtk.HeaderBar header_bar;
     private Gtk.Button open_button;
     private Gtk.Button save_button;
@@ -47,27 +48,37 @@ public class TextEditor : Adw.Application {
         header_bar.pack_end(save_as_button);
         header_bar.pack_end(save_button);
 
-        // Create text view with monospace font
-        text_view = new Gtk.TextView() {
+        // Create source buffer and view
+        buffer = new GtkSource.Buffer(null);
+        text_view = new GtkSource.View.with_buffer(buffer) {
             hexpand = true,
             vexpand = true,
             wrap_mode = Gtk.WrapMode.WORD,
-            monospace = true
+            monospace = true,
+            show_line_numbers = true,
+            highlight_current_line = true,
+            auto_indent = true,
+            indent_width = 4,
+            tab_width = 4,
+            insert_spaces_instead_of_tabs = true
         };
         
-        // Set larger font size using CSS on the text buffer
+        // Set larger font size using CSS
         var css_provider = new Gtk.CssProvider();
-        css_provider.load_from_data("textview text { font-size: 14pt; }".data);
+        css_provider.load_from_string("textview text { font-size: 14pt; }");
         text_view.get_style_context().add_provider(css_provider, Gtk.STYLE_PROVIDER_PRIORITY_USER);
         
-        // Set tab width to 4 spaces equivalent
-        var tab_array = new Pango.TabArray(1, true);
-        tab_array.set_tab(0, Pango.TabAlign.LEFT, 4 * Pango.SCALE);
-        text_view.tabs = tab_array;
+        // Initialize style scheme
+        update_style_scheme();
+        
+        // Connect to system theme changes
+        var settings = Gtk.Settings.get_default();
+        settings.notify["gtk-application-prefer-dark-theme"].connect(() => {
+            update_style_scheme();
+        });
 
-        // Auto-indentation setup
-        text_view.buffer.notify["cursor-position"].connect(() => {
-            var buffer = text_view.buffer;
+        // Auto-indentation setup (GtkSourceView handles most of this automatically)
+        buffer.notify["cursor-position"].connect(() => {
             Gtk.TextIter iter;
             buffer.get_iter_at_mark(out iter, buffer.get_insert());
             
@@ -88,17 +99,12 @@ public class TextEditor : Adw.Application {
             text_view.set_data<string>("indent-pattern", whitespace);
         });
 
-        // Handle key press events
+        // Handle key press events for additional auto-indentation
         var controller = new Gtk.EventControllerKey();
         controller.key_pressed.connect((keyval, keycode, state) => {
             if (keyval == Gdk.Key.Return || keyval == Gdk.Key.KP_Enter) {
-                var buffer = text_view.buffer;
-                string? indent = text_view.get_data<string>("indent-pattern");
-                
-                if (indent != null) {
-                    buffer.insert_at_cursor("\n" + indent, -1);
-                    return true;
-                }
+                // GtkSourceView handles most auto-indentation, but we can add custom logic here if needed
+                return false; // Let GtkSourceView handle it
             }
             return false;
         });
@@ -116,7 +122,7 @@ public class TextEditor : Adw.Application {
         window.close_request.connect(on_close_request);
         
         // Connect to buffer changed signal to enable save button
-        text_view.buffer.changed.connect(() => {
+        buffer.changed.connect(() => {
             save_button.sensitive = true;
         });
         
@@ -129,8 +135,12 @@ public class TextEditor : Adw.Application {
                 current_file = files[0].get_path();
                 uint8[] contents;
                 files[0].load_contents(null, out contents, null);
-                text_view.buffer.text = (string)contents;
-                text_view.buffer.set_modified(false);
+                buffer.text = (string)contents;
+                buffer.set_modified(false);
+                
+                // Set language based on file extension
+                set_language_from_filename(files[0].get_basename());
+                
                 window.title = "EctoEdit - " + files[0].get_basename();
                 save_button.sensitive = false;
             } catch (Error e) {
@@ -147,8 +157,12 @@ public class TextEditor : Adw.Application {
                 current_file = file.get_path();
                 uint8[] contents;
                 file.load_contents(null, out contents, null);
-                text_view.buffer.text = (string)contents;
-                text_view.buffer.set_modified(false);
+                buffer.text = (string)contents;
+                buffer.set_modified(false);
+                
+                // Set language based on file extension
+                set_language_from_filename(file.get_basename());
+                
                 window.title = "EctoEdit - " + file.get_basename();
                 save_button.sensitive = false;
             } catch (Error e) {
@@ -169,6 +183,10 @@ public class TextEditor : Adw.Application {
             try {
                 var file = dialog.save.end(res);
                 current_file = file.get_path();
+                
+                // Set language based on file extension
+                set_language_from_filename(file.get_basename());
+                
                 save_to_file(file);
             } catch (Error e) {
                 show_error("Could not save file", e.message);
@@ -178,9 +196,9 @@ public class TextEditor : Adw.Application {
 
     private void save_to_file(File file) {
         try {
-            var text = text_view.buffer.text;
+            var text = buffer.text;
             file.replace_contents(text.data, null, false, FileCreateFlags.NONE, null);
-            text_view.buffer.set_modified(false);
+            buffer.set_modified(false);
             window.title = "EctoEdit - " + file.get_basename();
             save_button.sensitive = false;
         } catch (Error e) {
@@ -189,18 +207,25 @@ public class TextEditor : Adw.Application {
     }
 
     private bool on_close_request() {
-        if (text_view.buffer.get_modified()) {
-            var dialog = new Gtk.AlertDialog("Unsaved Changes");
-            dialog.detail = "Do you want to save your changes before closing?";
-            dialog.buttons = {"Save", "Don't Save", "Cancel"};
-            dialog.default_button = 0;
-            dialog.cancel_button = 2;
+        if (buffer.get_modified()) {
+            // Create a custom dialog with styled buttons
+            var dialog = new Adw.AlertDialog("Unsaved Changes", "Do you want to save your changes before closing?");
+            
+            dialog.add_response("cancel", "Cancel");
+            dialog.add_response("discard", "Don't Save");
+            dialog.add_response("save", "Save");
+            
+            dialog.set_response_appearance("discard", Adw.ResponseAppearance.DESTRUCTIVE);
+            dialog.set_response_appearance("save", Adw.ResponseAppearance.SUGGESTED);
+            
+            dialog.set_default_response("save");
+            dialog.set_close_response("cancel");
             
             dialog.choose.begin(window, null, (obj, res) => {
                 try {
-                    int response = dialog.choose.end(res);
+                    string response = dialog.choose.end(res);
                     switch (response) {
-                        case 0: // Save
+                        case "save":
                             if (current_file != null) {
                                 save_to_file(File.new_for_path(current_file));
                                 window.destroy();
@@ -219,10 +244,10 @@ public class TextEditor : Adw.Application {
                                 });
                             }
                             break;
-                        case 1: // Don't Save
+                        case "discard":
                             window.destroy();
                             break;
-                        case 2: // Cancel
+                        case "cancel":
                             // Do nothing, keep window open
                             break;
                     }
@@ -236,10 +261,35 @@ public class TextEditor : Adw.Application {
         return false; // Allow close if no changes
     }
 
+    private void update_style_scheme() {
+        var style_manager = GtkSource.StyleSchemeManager.get_default();
+        var settings = Gtk.Settings.get_default();
+        
+        string scheme_id;
+        if (settings.gtk_application_prefer_dark_theme) {
+            // Use dark theme scheme
+            scheme_id = "Adwaita-dark";
+        } else {
+            // Use light theme scheme  
+            scheme_id = "Adwaita";
+        }
+        
+        var scheme = style_manager.get_scheme(scheme_id);
+        if (scheme != null) {
+            buffer.set_style_scheme(scheme);
+        }
+    }
+
+    private void set_language_from_filename(string filename) {
+        var language_manager = GtkSource.LanguageManager.get_default();
+        var language = language_manager.guess_language(filename, null);
+        buffer.set_language(language);
+    }
+
     private void show_error(string primary, string secondary) {
-        var dialog = new Gtk.AlertDialog(primary);
-        dialog.detail = secondary;
-        dialog.show(window);
+        var dialog = new Adw.AlertDialog(primary, secondary);
+        dialog.add_response("ok", "OK");
+        dialog.choose.begin(window, null, null);
     }
 
     public static int main(string[] args) {
