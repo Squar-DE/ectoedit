@@ -10,7 +10,7 @@ public class TextEditor : Adw.Application {
 
     public TextEditor() {
         Object(
-            application_id: "com.github.SqaurDE.EctoEdit",
+            application_id: "org.SqaurDE.EctoEdit",
             flags: ApplicationFlags.HANDLES_OPEN
         );
     }
